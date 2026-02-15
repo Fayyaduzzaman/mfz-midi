@@ -33,6 +33,21 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="panel p-4">
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan">Access</p>
+          <p className="mt-2 text-sm text-slate-200">Approve or block member emails from one admin panel.</p>
+        </div>
+        <div className="panel p-4">
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan">Moderation</p>
+          <p className="mt-2 text-sm text-slate-200">Review uploaded instruments before they appear in editor flows.</p>
+        </div>
+        <div className="panel p-4">
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-cyan">Quota</p>
+          <p className="mt-2 text-sm text-slate-200">Apply a global per-user upload limit for storage usage.</p>
+        </div>
+      </div>
+
       <div className="panel space-y-3 p-4">
         <h2 className="text-lg font-semibold text-slate-100">Site Settings</h2>
         <div className="flex flex-wrap items-center gap-3">

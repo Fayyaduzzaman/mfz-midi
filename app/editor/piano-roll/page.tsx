@@ -12,6 +12,7 @@ import {
   MidiPlayer,
   type EngineKind,
   type NoteEvent,
+  type ScheduledEvent,
   type WebMidiState
 } from '@/lib/midiPlayer';
 import {
@@ -24,6 +25,8 @@ import {
 import {
   createProjectRecord,
   createSoundfontUpload,
+  getSiteSetting,
+  getUserSoundfontUsageBytes,
   listProjectsForUser,
   uploadInstrumentAsset,
   type ProjectRow
@@ -35,30 +38,93 @@ const defaultNotes: NoteEvent[] = [
   { id: 'boot-3', midi: 67, pitch: 'G4', time: 1, duration: 0.5, velocity: 0.85 }
 ];
 
+const soundfontOptions = [
+  { label: 'Acoustic Grand Piano', value: 'acoustic_grand_piano' },
+  { label: 'Electric Piano 1', value: 'electric_piano_1' },
+  { label: 'Electric Piano 2', value: 'electric_piano_2' },
+  { label: 'Church Organ', value: 'church_organ' },
+  { label: 'Acoustic Guitar', value: 'acoustic_guitar_nylon' },
+  { label: 'Synth Brass', value: 'synth_brass_1' },
+  { label: 'Violin', value: 'violin' }
+];
+
+function clampQuotaMb(value: unknown, fallback = 120) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(10, Math.min(5000, value));
+  }
+  return fallback;
+}
+
 export default function PianoRollPage() {
   const gridRef = useRef<PianoRollGridHandle | null>(null);
   const playerRef = useRef<MidiPlayer | null>(null);
+  const syncTimeoutsRef = useRef<number[]>([]);
   const { profile, session } = useAuth();
 
   const [notes, setNotes] = useState<NoteEvent[]>(defaultNotes);
   const [tempo, setTempo] = useState(120);
   const [isPlaying, setIsPlaying] = useState(false);
   const [engine, setEngine] = useState<EngineKind>('tone');
+  const [soundfontName, setSoundfontName] = useState('acoustic_grand_piano');
   const [webMidiState, setWebMidiState] = useState<WebMidiState>('unsupported');
   const [status, setStatus] = useState('Ready');
   const [projectName, setProjectName] = useState('Untitled Session');
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [activePlaybackNotes, setActivePlaybackNotes] = useState<number[]>([]);
+  const [quotaLimitMb, setQuotaLimitMb] = useState(120);
+  const [quotaUsedMb, setQuotaUsedMb] = useState(0);
+
+  const clearPlaybackSync = useCallback(() => {
+    syncTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    syncTimeoutsRef.current = [];
+    setActivePlaybackNotes([]);
+  }, []);
+
+  const schedulePlaybackSync = useCallback(
+    (events: ScheduledEvent[]) => {
+      clearPlaybackSync();
+
+      const activeMidi = new Set<number>();
+      const setActive = () => {
+        setActivePlaybackNotes(Array.from(activeMidi).sort((left, right) => left - right));
+      };
+
+      events.forEach((event) => {
+        const noteOnTimeout = window.setTimeout(() => {
+          activeMidi.add(event.midi);
+          setActive();
+        }, event.timeSeconds * 1000);
+
+        const noteOffTimeout = window.setTimeout(() => {
+          activeMidi.delete(event.midi);
+          setActive();
+        }, (event.timeSeconds + event.durationSeconds) * 1000);
+
+        syncTimeoutsRef.current.push(noteOnTimeout, noteOffTimeout);
+      });
+
+      const maxEndMs =
+        events.reduce((maxTime, event) => Math.max(maxTime, event.timeSeconds + event.durationSeconds), 0) * 1000;
+      const doneTimeout = window.setTimeout(() => {
+        setActivePlaybackNotes([]);
+        setIsPlaying(false);
+      }, maxEndMs + 120);
+      syncTimeoutsRef.current.push(doneTimeout);
+    },
+    [clearPlaybackSync]
+  );
 
   useEffect(() => {
     playerRef.current = new MidiPlayer();
     void detectWebMidiSupport().then((state) => setWebMidiState(state));
 
     return () => {
+      clearPlaybackSync();
       playerRef.current?.dispose();
       playerRef.current = null;
     };
-  }, []);
+  }, [clearPlaybackSync]);
 
   const loadProjects = useCallback(async () => {
     if (!session?.user.id) {
@@ -80,11 +146,31 @@ export default function PianoRollPage() {
     setStatus(`Loaded ${nextProjects.length} project(s).`);
   }, [session?.user.id]);
 
+  const loadQuotaUsage = useCallback(async () => {
+    if (!session?.user.id) {
+      return;
+    }
+
+    const [quotaResult, usageResult] = await Promise.all([
+      getSiteSetting('storage_quota_mb'),
+      getUserSoundfontUsageBytes(session.user.id)
+    ]);
+
+    if (quotaResult.data) {
+      setQuotaLimitMb(clampQuotaMb(quotaResult.data.value));
+    }
+
+    if (usageResult.data !== null && usageResult.data !== undefined) {
+      setQuotaUsedMb(usageResult.data / (1024 * 1024));
+    }
+  }, [session?.user.id]);
+
   useEffect(() => {
     if (session?.user.id) {
       void loadProjects();
+      void loadQuotaUsage();
     }
-  }, [loadProjects, session?.user.id]);
+  }, [loadProjects, loadQuotaUsage, session?.user.id]);
 
   const handlePlay = async () => {
     if (!playerRef.current) {
@@ -96,14 +182,33 @@ export default function PianoRollPage() {
     globalWindow.__MFZ_LAST_SCHEDULE_COUNT = scheduledPreview;
 
     try {
-      await playerRef.current.play(notes, { engine, tempo });
+      await playerRef.current.play(notes, { engine, soundfontName, tempo });
+      const scheduled = playerRef.current.getScheduledEvents();
+      schedulePlaybackSync(scheduled);
+
       setIsPlaying(true);
       globalWindow.__MFZ_LAST_SCHEDULE_COUNT = Math.max(
         scheduledPreview,
         playerRef.current.getScheduledCount()
       );
-      setStatus(`Playing ${notes.length} note(s) with ${engine} engine.`);
+      setStatus(
+        `Playing ${notes.length} note(s) with ${engine}${engine === 'soundfont' ? ` (${soundfontName})` : ''}.`
+      );
     } catch (error) {
+      if (engine === 'soundfont') {
+        try {
+          await playerRef.current.play(notes, { engine: 'tone', tempo });
+          const scheduled = playerRef.current.getScheduledEvents();
+          schedulePlaybackSync(scheduled);
+          setEngine('tone');
+          setIsPlaying(true);
+          setStatus('Soundfont engine failed. Playback switched to Tone Synth automatically.');
+          return;
+        } catch {
+          // Fallback failed too; keep original error handling below.
+        }
+      }
+
       const message = error instanceof Error ? error.message : 'Unknown playback failure.';
       setStatus(`Playback failed: ${message}`);
     }
@@ -111,11 +216,13 @@ export default function PianoRollPage() {
 
   const handlePause = () => {
     playerRef.current?.pause();
+    clearPlaybackSync();
     setIsPlaying(false);
   };
 
   const handleStop = () => {
     playerRef.current?.stop();
+    clearPlaybackSync();
     setIsPlaying(false);
     setStatus('Playback stopped.');
   };
@@ -192,6 +299,28 @@ export default function PianoRollPage() {
       return;
     }
 
+    const [quotaResult, usageResult] = await Promise.all([
+      getSiteSetting('storage_quota_mb'),
+      getUserSoundfontUsageBytes(session.user.id)
+    ]);
+
+    if (usageResult.error) {
+      setStatus(`Usage check failed: ${usageResult.error.message}`);
+      return;
+    }
+
+    const quotaMb = clampQuotaMb(quotaResult.data?.value, quotaLimitMb);
+    const usedBytes = usageResult.data ?? 0;
+    const quotaBytes = quotaMb * 1024 * 1024;
+    const nextTotal = usedBytes + file.size;
+
+    if (nextTotal > quotaBytes) {
+      setStatus(
+        `Upload blocked by quota. Current usage ${(usedBytes / (1024 * 1024)).toFixed(1)}MB / ${quotaMb}MB.`
+      );
+      return;
+    }
+
     const storageResult = await uploadInstrumentAsset(file, session.user.id);
     if (storageResult.error || !storageResult.data) {
       setStatus(`Upload failed: ${storageResult.error?.message ?? 'Unknown error'}`);
@@ -212,12 +341,16 @@ export default function PianoRollPage() {
       return;
     }
 
+    await loadQuotaUsage();
     setStatus('Instrument uploaded and queued for admin approval.');
   };
 
   const activeMidiNotes = useMemo(() => {
+    if (activePlaybackNotes.length > 0) {
+      return activePlaybackNotes;
+    }
     return Array.from(new Set(notes.map((note) => note.midi))).slice(0, 25);
-  }, [notes]);
+  }, [activePlaybackNotes, notes]);
 
   return (
     <div className="space-y-4">
@@ -258,11 +391,17 @@ export default function PianoRollPage() {
         <span className="rounded-full border border-white/15 bg-black/25 px-3 py-1 text-xs text-slate-300">
           WebMIDI: {webMidiState}
         </span>
+        <span className="rounded-full border border-white/15 bg-black/25 px-3 py-1 text-xs text-slate-300">
+          Quota: {quotaUsedMb.toFixed(1)}MB / {quotaLimitMb}MB
+        </span>
       </div>
 
       <EditorToolbar
         engine={engine}
         onSetEngine={setEngine}
+        onSetSoundfontName={setSoundfontName}
+        soundfontName={soundfontName}
+        soundfontOptions={soundfontOptions}
         onImportMidi={handleImportMidi}
         onExportMidi={handleExportMidi}
         onExportWav={handleExportWav}
@@ -271,6 +410,7 @@ export default function PianoRollPage() {
         onInstrumentUpload={handleUploadInstrument}
         onClear={() => {
           gridRef.current?.clear();
+          clearPlaybackSync();
           setStatus('Grid cleared.');
         }}
       />

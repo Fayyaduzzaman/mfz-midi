@@ -7,7 +7,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="panel p-4">
           <h1 className="text-xl font-semibold text-sand">Admin Dashboard</h1>
           <p className="text-sm text-slate-300">
-            Manage members, instrument uploads, and site-level quota settings.
+            Manage member access, user blocking, upload moderation, and site-level quota settings.
           </p>
         </div>
         {children}

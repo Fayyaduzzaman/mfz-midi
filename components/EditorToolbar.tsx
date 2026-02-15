@@ -12,6 +12,9 @@ interface EditorToolbarProps {
   onLoadProjects: () => Promise<void>;
   onSaveProject: () => Promise<void>;
   onSetEngine: (engine: 'soundfont' | 'tone') => void;
+  onSetSoundfontName: (name: string) => void;
+  soundfontName: string;
+  soundfontOptions: Array<{ label: string; value: string }>;
 }
 
 export default function EditorToolbar({
@@ -23,7 +26,10 @@ export default function EditorToolbar({
   onInstrumentUpload,
   onLoadProjects,
   onSaveProject,
-  onSetEngine
+  onSetEngine,
+  onSetSoundfontName,
+  soundfontName,
+  soundfontOptions
 }: EditorToolbarProps) {
   const midiInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -75,6 +81,21 @@ export default function EditorToolbar({
         >
           <option value="tone">Tone Synth</option>
           <option value="soundfont">Soundfont Piano</option>
+        </select>
+      </label>
+
+      <label className="flex items-center gap-2 text-sm text-slate-200">
+        Instrument
+        <select
+          value={soundfontName}
+          onChange={(event) => onSetSoundfontName(event.target.value)}
+          className="rounded-lg border border-white/20 bg-black/30 px-2 py-1 text-slate-100"
+        >
+          {soundfontOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
         </select>
       </label>
 

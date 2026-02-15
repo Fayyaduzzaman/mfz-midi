@@ -1,71 +1,87 @@
 # MFZ MIDI
 
-MFZ MIDI is a full-stack starter for a web-based MIDI editor and player.
+MFZ MIDI is a full-stack web music workspace built with Next.js + Supabase.
+
+## Version
+
+Current app version: `0.3.0`
 
 ## Stack
 
 - Next.js App Router + TypeScript + Tailwind CSS
-- Tone.js playback with `AudioEngine` abstraction
-- Optional soundfont loading (`soundfont-player`) and Web MIDI detection
-- Supabase Auth, Postgres, Storage, Realtime-ready helpers, and Edge Function template
+- Tone.js playback with optional soundfont playback
+- Supabase Auth, Postgres, Storage, and Realtime
 - Jest unit tests + Playwright E2E scaffold
-- GitHub Actions CI + optional Vercel deploy workflow
 
-## Implemented Features
+## Features
 
-- Supabase auth UI for magic-link and email/password (`/auth/login`)
-- Editor modes:
-  - Piano Roll (interactive add/remove note grid)
-  - DJ Deck (two-deck crossfader UI)
-  - Groovepad (pad triggering)
-  - Visual Keyboard (highlight/trigger)
-  - Sheet mode placeholder (lazy-load hook for OSMD/VexFlow)
-- Tone.js playback with transport controls and keyboard shortcuts
-- MIDI import/export (`.mid`) and client-side WAV export
-- Supabase project save/load (`projects` table)
-- Storage upload + pending moderation flow (`soundfonts` table)
-- Protected admin area for user list, upload moderation, site settings
+### Core MIDI Features
 
-## Project Setup
+- Interactive piano roll with note grid editing
+- MIDI file import (`.mid`, `.midi`)
+- Export to MIDI and WAV
+- Soundfont instrument selection for playback
+- Visual keyboard playback sync
+- Project save/load with Supabase
 
-### Install dependencies
+### Admin Control System
+
+- Admin-only dashboard (`/admin`)
+- Approve/reject instrument uploads
+- Block/unblock users by email
+- Email access registry (grant access to specific emails)
+- Signup disabled in login UI
+- Storage quota setting with upload enforcement
+
+### Pro Music Studio Features
+
+- DJ deck mode
+- Groovepad sampler
+- Drum machine (16-step sequencer)
+- Collaboration rooms with realtime message feed
+- User panel with account, quota, projects, and upload summaries
+
+## Setup
+
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-### Setup env
+### 2. Configure environment
 
-Copy `.env.local.example` to `.env.local` and fill these values:
+Copy `.env.local.example` to `.env.local` and fill:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY` (optional)
-- `VERCEL_TOKEN` (if auto-deploy)
+- `VERCEL_TOKEN` (optional)
 
-### Run dev
+### 3. Apply Supabase SQL
+
+Run these scripts in order:
+
+- `supabase/migrations/001_init.sql`
+- `supabase/migrations/002_access_control_and_rooms.sql`
+- `supabase/seed/seed.sql`
+
+### 4. Start dev server
 
 ```bash
 npm run dev
-# open http://localhost:3000
 ```
 
-## Supabase Setup
+Open `http://localhost:3000`.
 
-1. Create a free Supabase project.
-2. Open SQL Editor and run:
-   - `supabase/migrations/001_init.sql`
-   - `supabase/seed/seed.sql`
-3. Use magic-link login for first account creation, then run seed to mark the first user as admin.
+## Auth and Access Model
 
-## Deploy
+- Login supports magic-link and password.
+- Signup button is removed.
+- Non-admin users need admin-approved email access (`access_registry`) to use editor routes.
+- Admin can grant/block access from `/admin`.
 
-1. Push repo to GitHub.
-2. Connect to Vercel (or Netlify for frontend hosting).
-3. Set environment variables in hosting project settings.
-4. Enable auto-deploy on push.
-
-## Commands
+## Scripts
 
 ```bash
 npm run lint
@@ -75,34 +91,8 @@ npm run build
 npm run format:check
 ```
 
-## Branch / Phase Commands
-
-```bash
-git checkout -b phase/01-mvp
-git checkout -b phase/02-instruments
-git checkout -b phase/03-export
-git checkout -b phase/04-admin
-git checkout -b phase/05-pro
-```
-
-Example commit messages per phase:
-
-```bash
-git commit -m "feat(midi): add MidiPlayer (Tone.js) and basic play controls"
-git commit -m "feat(editor): add PianoRollGrid with click-to-add notes"
-git commit -m "chore(ci): add GitHub Actions CI"
-```
-
-## Admin Features
-
-- `/admin` requires `profiles.is_admin = true`
-- View user list
-- Approve/reject pending uploads
-- Manage `site_settings` quota entries
-
 ## Docs
 
 - `DOCS/architecture.md`
 - `DOCS/free-hosting-guide.md`
 - `DEVNOTES.md`
-

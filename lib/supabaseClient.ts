@@ -16,6 +16,15 @@ export interface ProfileRow {
   is_admin: boolean;
 }
 
+export interface AccessRegistryRow {
+  created_at: string;
+  email: string;
+  granted_by: string | null;
+  note: string | null;
+  status: 'approved' | 'blocked';
+  updated_at: string;
+}
+
 export interface ProjectMidiJson {
   notes: Array<{
     duration: number;
@@ -59,12 +68,39 @@ export interface SiteSettingRow {
   value: JsonValue;
 }
 
+export interface CollaborationRoomRow {
+  created_at: string;
+  created_by: string | null;
+  id: string;
+  name: string;
+  updated_at: string;
+}
+
+export interface CollaborationMessageRow {
+  author_id: string | null;
+  author_name: string;
+  created_at: string;
+  id: string;
+  message: string;
+  room_id: string;
+}
+
 export interface QueryResult<TData> {
   data: TData | null;
   error: Error | null;
 }
 
 interface Database {
+  access_registry: {
+    Insert: Pick<AccessRegistryRow, 'email' | 'status'> &
+      Partial<Pick<AccessRegistryRow, 'granted_by' | 'note'>>;
+  };
+  collaboration_messages: {
+    Insert: Pick<CollaborationMessageRow, 'author_id' | 'author_name' | 'message' | 'room_id'>;
+  };
+  collaboration_rooms: {
+    Insert: Pick<CollaborationRoomRow, 'created_by' | 'name'>;
+  };
   profiles: {
     Insert: Partial<ProfileRow> & Pick<ProfileRow, 'id'>;
   };
@@ -95,6 +131,10 @@ let browserClient: SupabaseClient | null = null;
 
 function toError(error: { message: string } | null | undefined) {
   return error ? new Error(error.message) : null;
+}
+
+export function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
 }
 
 export function isSupabaseConfigured() {
@@ -149,6 +189,36 @@ export async function signOutUser() {
   return getSupabaseClient().auth.signOut();
 }
 
+interface EmailAccessState {
+  allowed: boolean;
+  blocked: boolean;
+}
+
+export async function checkEmailAccess(email: string): Promise<QueryResult<EmailAccessState>> {
+  const normalizedEmail = normalizeEmail(email);
+
+  const [allowedResult, blockedResult] = await Promise.all([
+    getSupabaseClient().rpc('is_email_allowed', { input_email: normalizedEmail }),
+    getSupabaseClient().rpc('is_email_blocked', { input_email: normalizedEmail })
+  ]);
+
+  const error = toError(allowedResult.error) ?? toError(blockedResult.error);
+  if (error) {
+    return {
+      data: null,
+      error
+    };
+  }
+
+  return {
+    data: {
+      allowed: Boolean(allowedResult.data),
+      blocked: Boolean(blockedResult.data)
+    },
+    error: null
+  };
+}
+
 export async function getProfileByUserId(userId: string): Promise<QueryResult<ProfileRow>> {
   const { data, error } = await getSupabaseClient()
     .from('profiles')
@@ -185,6 +255,51 @@ export async function listAllProfiles(): Promise<QueryResult<ProfileRow[]>> {
 
   return {
     data: (data as ProfileRow[] | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function listAccessRegistry(): Promise<QueryResult<AccessRegistryRow[]>> {
+  const { data, error } = await getSupabaseClient()
+    .from('access_registry')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  return {
+    data: (data as AccessRegistryRow[] | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function getAccessEntryByEmail(email: string): Promise<QueryResult<AccessRegistryRow>> {
+  const { data, error } = await getSupabaseClient()
+    .from('access_registry')
+    .select('*')
+    .eq('email', normalizeEmail(email))
+    .maybeSingle();
+
+  return {
+    data: (data as AccessRegistryRow | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function upsertAccessRegistryEntry(
+  entry: Database['access_registry']['Insert']
+): Promise<QueryResult<AccessRegistryRow>> {
+  const payload = {
+    ...entry,
+    email: normalizeEmail(entry.email)
+  };
+
+  const { data, error } = await getSupabaseClient()
+    .from('access_registry')
+    .upsert(payload, { onConflict: 'email' })
+    .select('*')
+    .maybeSingle();
+
+  return {
+    data: (data as AccessRegistryRow | null) ?? null,
     error: toError(error)
   };
 }
@@ -295,6 +410,56 @@ export async function listPendingSoundfontUploads(): Promise<QueryResult<Soundfo
   };
 }
 
+export async function listApprovedSoundfonts(): Promise<QueryResult<SoundfontRow[]>> {
+  const { data, error } = await getSupabaseClient()
+    .from('soundfonts')
+    .select('*')
+    .eq('status', 'approved')
+    .order('created_at', { ascending: false });
+
+  return {
+    data: (data as SoundfontRow[] | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function listUserSoundfontUploads(ownerId: string): Promise<QueryResult<SoundfontRow[]>> {
+  const { data, error } = await getSupabaseClient()
+    .from('soundfonts')
+    .select('*')
+    .eq('owner_id', ownerId)
+    .order('created_at', { ascending: false });
+
+  return {
+    data: (data as SoundfontRow[] | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function getUserSoundfontUsageBytes(ownerId: string): Promise<QueryResult<number>> {
+  const { data, error } = await getSupabaseClient()
+    .from('soundfonts')
+    .select('size_bytes, status')
+    .eq('owner_id', ownerId);
+
+  if (error) {
+    return {
+      data: null,
+      error: toError(error)
+    };
+  }
+
+  const rows = (data as Array<{ size_bytes: number; status: SoundfontRow['status'] }> | null) ?? [];
+  const totalBytes = rows
+    .filter((row) => row.status !== 'rejected')
+    .reduce((sum, row) => sum + Math.max(0, row.size_bytes), 0);
+
+  return {
+    data: totalBytes,
+    error: null
+  };
+}
+
 export async function updateSoundfontStatus(
   id: string,
   status: SoundfontRow['status'],
@@ -342,6 +507,89 @@ export async function upsertSiteSetting(
   };
 }
 
+export async function listCollaborationRooms(): Promise<QueryResult<CollaborationRoomRow[]>> {
+  const { data, error } = await getSupabaseClient()
+    .from('collaboration_rooms')
+    .select('*')
+    .order('updated_at', { ascending: false });
+
+  return {
+    data: (data as CollaborationRoomRow[] | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function createCollaborationRoom(
+  room: Database['collaboration_rooms']['Insert']
+): Promise<QueryResult<CollaborationRoomRow>> {
+  const trimmedName = room.name.trim();
+  if (!trimmedName) {
+    return {
+      data: null,
+      error: new Error('Room name is required.')
+    };
+  }
+
+  const { data, error } = await getSupabaseClient()
+    .from('collaboration_rooms')
+    .insert({
+      ...room,
+      name: trimmedName
+    })
+    .select('*')
+    .maybeSingle();
+
+  return {
+    data: (data as CollaborationRoomRow | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function listRoomMessages(
+  roomId: string,
+  limit = 120
+): Promise<QueryResult<CollaborationMessageRow[]>> {
+  const { data, error } = await getSupabaseClient()
+    .from('collaboration_messages')
+    .select('*')
+    .eq('room_id', roomId)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+
+  return {
+    data: (data as CollaborationMessageRow[] | null) ?? null,
+    error: toError(error)
+  };
+}
+
+export async function postRoomMessage(
+  message: Database['collaboration_messages']['Insert']
+): Promise<QueryResult<CollaborationMessageRow>> {
+  const payload = {
+    ...message,
+    author_name: message.author_name.trim() || 'member',
+    message: message.message.trim()
+  };
+
+  if (!payload.message) {
+    return {
+      data: null,
+      error: new Error('Message cannot be empty.')
+    };
+  }
+
+  const { data, error } = await getSupabaseClient()
+    .from('collaboration_messages')
+    .insert(payload)
+    .select('*')
+    .maybeSingle();
+
+  return {
+    data: (data as CollaborationMessageRow | null) ?? null,
+    error: toError(error)
+  };
+}
+
 export function subscribeToProjectChanges(
   projectId: string,
   callback: (payload: Record<string, unknown>) => void
@@ -355,6 +603,25 @@ export function subscribeToProjectChanges(
         schema: 'public',
         table: 'projects',
         filter: `id=eq.${projectId}`
+      },
+      (payload) => callback(payload as unknown as Record<string, unknown>)
+    )
+    .subscribe();
+}
+
+export function subscribeToRoomMessages(
+  roomId: string,
+  callback: (payload: Record<string, unknown>) => void
+): RealtimeChannel {
+  return getSupabaseClient()
+    .channel(`collab-room:${roomId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'collaboration_messages',
+        filter: `room_id=eq.${roomId}`
       },
       (payload) => callback(payload as unknown as Record<string, unknown>)
     )

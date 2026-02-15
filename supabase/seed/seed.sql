@@ -37,6 +37,25 @@ where not exists (
 );
 
 with first_user as (
+  select id, email
+  from auth.users
+  order by created_at
+  limit 1
+)
+insert into public.access_registry (email, status, granted_by, note)
+select
+  lower(email),
+  'approved',
+  id,
+  'Bootstrap admin access'
+from first_user
+where email is not null
+on conflict (email) do update
+set status = excluded.status,
+    granted_by = excluded.granted_by,
+    note = excluded.note;
+
+with first_user as (
   select id from auth.users order by created_at limit 1
 )
 insert into public.soundfonts (owner_id, label, bucket, storage_path, mime_type, size_bytes, status)
@@ -51,4 +70,17 @@ select
 from first_user
 where not exists (
   select 1 from public.soundfonts where label = 'demo-piano.sf2'
+);
+
+with first_user as (
+  select id
+  from auth.users
+  order by created_at
+  limit 1
+)
+insert into public.collaboration_rooms (name, created_by)
+select 'Studio Room', id
+from first_user
+where not exists (
+  select 1 from public.collaboration_rooms where name = 'Studio Room'
 );
